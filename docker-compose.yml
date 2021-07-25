@@ -1,0 +1,127 @@
+version: "3.8" # version du fichier de configuration.
+
+# si un fichier ".env" est présent dans le même répertoire que ce fichier
+# il sera lu est intégré à cette configuration
+
+###   exemple de .env   ###
+# INFLUXDB_USERNAME=admin
+# INFLUXDB_PASSWORD=admin
+# GRAFANA_USERNAME=admin
+# GRAFANA_PASSWORD=admin
+### fin exemple de .env ###
+
+# les valeurs dans le fichier docker-compose
+# exemple : INFLUXDB_USERNAME=${INFLUXDB_USERNAME}
+# ${INFLUXDB_USERNAME} sera remplacé par la valeur "admin" du fichier .env
+
+services: # un service va permettre de configurer un conteneur
+    influxdb: # nom du service. On peut choisir n'importe quel nom (éviter accent, espace)
+        hostname: influxdb # nom de l'hote, var servir de DNS pour communniquer entre les conteneurs
+        container_name: ${PREFIX:-P001}influx
+        image: influxdb:1.8.4 # image à télécharger
+        restart: unless-stopped
+        volumes: # permet le partage de répertoire entre l'OS hôte et le conteneur
+        - influxdb-storage:/var/lib/influxdb
+        - ./etc/influx:/etc/influxdb # ./repertoire_windows:repertoire_conteneur
+        environment: # permet de configurer les variables d'environnement
+        - INFLUXDB_DB=docker # pour connaitre cette variable, je dois regarder la documentation du conteneur influxdb
+        - INFLUXDB_ADMIN_USER=${INFLUXDB_USERNAME:-admin}
+        - INFLUXDB_ADMIN_PASSWORD=${INFLUXDB_PASSWORD:-admin}
+
+    telegraf:
+        image: telegraf/postgresql:1.13v2021.07.11
+        build:
+            context: ./docker/telegraf
+        container_name: ${PREFIX:-P001}telegraf
+        restart: unless-stopped
+        depends_on: # on s'assure que le service se nommant influxdb est bien démarré (mais ne s'assure pas du démarrage de l'application)
+        - influxdb
+        volumes:
+        # récupération des métriques de docker.
+        - "//var/run/docker.sock:/var/run/docker.sock:ro" # repertoire sur l'hote Linux (celui qui contient le conteneur)
+        - ./etc/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro # ro indique en lecture seule. Le conteneur n'a le droit que de lire le contenu de ce répertoire
+        
+    grafana:
+        image: grafana/grafana:7.3.1
+        restart: unless-stopped
+        container_name: ${PREFIX:-P001}grafana
+        volumes:
+        # - grafana-storage:/var/lib/grafana # volume spécial, c'est un lien vers un répertoire géré par docker (voir plus bas dans ce fichier)
+        - ./etc/grafana/grafana.ini:/etc/grafana/grafana.ini
+        # - ./etc/grafana/datasources:/etc/grafana/datasources
+        depends_on:
+        - influxdb
+        - telegraf
+        environment:
+        - GF_SECURITY_ADMIN_USER=${GRAFANA_USERNAME:-admin}
+        - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+        - GF_PATHS_PLUGINS=/var/lib/grafana/plugins
+        ports:
+        - "${PORT_GRAFANA:-3000}:3000"
+
+    postgre:
+        image: postgres:13.3
+        container_name: ${PREFIX:-P001}postgres_metriques
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-admin}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
+            PGDATA: /data/postgres
+        # volumes:
+        #     - postgres:/data/postgres
+        ports:
+            - "5433:5432"
+        restart: unless-stopped
+
+    fluentd:
+        image: fluentd/postgresql:2021.07.11
+        container_name: ${PREFIX:-P001}fluentd
+        build:
+            # dockerfile: ./docker/fluentd
+            context: ./docker/fluentd
+        volumes:
+            - ./etc/fluentd:/fluentd/etc
+        links:
+            - postgre
+        ports:
+            - "24224:24224"
+            - "24224:24224/udp"
+
+    postgre.tsdb:
+        image: postgres:13.3
+        container_name: ${PREFIX:-P001}postgres_tsdb
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-postgres}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+            PGDATA: /data/postgres
+        volumes:
+            - ./etc/postgretsdb/init:/etc/postgre/init:ro
+        ports:
+            - "5432:5432"
+        restart: unless-stopped
+
+    adminer:
+        image: adminer:4.8.1-standalone
+        container_name: ${PREFIX:-P001}adminer
+        restart: unless-stopped
+        ports:
+            - "${ADMINER_PORT:-8080}:8080"
+
+    pgadmin:
+        image: dpage/pgadmin4
+        container_name: ${PREFIX:-P001}pgadmin
+        environment:
+            PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin4@pgadmin.org}
+            PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+            PGADMIN_DEFAULT_USER: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+            PGADMIN_CONFIG_SERVER_MODE: "False"
+        volumes:
+            - pgadmin:/root/.pgadmin
+        ports:
+            - "${PGADMIN_PORT:-5050}:80"
+        restart: unless-stopped
+
+volumes: # répertoire fabriqués par docker sur l'hôte linux
+    influxdb-storage:
+    grafana-storage:
+    postgres:
+    pgadmin:
