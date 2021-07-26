@@ -93,6 +93,7 @@ services: # un service va permettre de configurer un conteneur
             POSTGRES_USER: ${POSTGRES_USER:-postgres}
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
             PGDATA: /data/postgres
+            POSTGRES_DB: tdsb
         volumes:
             - ./etc/postgretsdb/init:/etc/postgre/init:ro
         ports:
